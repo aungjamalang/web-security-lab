@@ -1,4 +1,3 @@
-
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -9,6 +8,10 @@ const authStore = useAuthStore()
 
 const errorMessage = ref('')
 const isLoggingOut = ref(false)
+
+const verificationMessage = ref('')
+const verificationError = ref('')
+const isResendingVerification = ref(false)
 
 async function logout() {
   errorMessage.value = ''
@@ -38,6 +41,22 @@ async function retryProfile() {
       'Unable to load your profile. Check your connection and try again.'
   }
 }
+
+async function resendVerificationEmail() {
+  verificationMessage.value = ''
+  verificationError.value = ''
+  isResendingVerification.value = true
+
+  try {
+    verificationMessage.value =
+      await authStore.resendVerificationEmail()
+  } catch {
+    verificationError.value =
+      'Unable to send the verification email. Please try again.'
+  } finally {
+    isResendingVerification.value = false
+  }
+}
 </script>
 
 <template>
@@ -48,8 +67,51 @@ async function retryProfile() {
 
       <template v-if="authStore.user">
         <h2>Welcome, {{ authStore.user.name }}!</h2>
+
         <p>Email: {{ authStore.user.email }}</p>
         <p>User ID: {{ authStore.user.id }}</p>
+
+        <section class="verification-section">
+          <template v-if="authStore.user.email_verified_at">
+            <p class="verified-status" role="status">
+              ✓ Your email address is verified.
+            </p>
+          </template>
+
+          <template v-else>
+            <p class="verification-notice">
+              Your email address has not been verified yet.
+            </p>
+
+            <button
+              type="button"
+              :disabled="isResendingVerification"
+              @click="resendVerificationEmail"
+            >
+              {{
+                isResendingVerification
+                  ? 'Sending email…'
+                  : 'Resend verification email'
+              }}
+            </button>
+
+            <p
+              v-if="verificationMessage"
+              class="verified-status"
+              role="status"
+            >
+              {{ verificationMessage }}
+            </p>
+
+            <p
+              v-if="verificationError"
+              class="error"
+              role="alert"
+            >
+              {{ verificationError }}
+            </p>
+          </template>
+        </section>
 
         <button
           type="button"
@@ -116,6 +178,22 @@ h1 {
   margin-top: 8px;
 }
 
+.verification-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.verification-notice {
+  color: #92400e;
+  line-height: 1.5;
+}
+
+.verified-status {
+  color: #047857;
+  line-height: 1.5;
+}
+
 button {
   margin-top: 16px;
   padding: 12px 18px;
@@ -134,5 +212,6 @@ button:disabled {
 
 .error {
   color: #b91c1c;
+  line-height: 1.5;
 }
 </style>

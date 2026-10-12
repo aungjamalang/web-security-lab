@@ -56,4 +56,28 @@ class AuthController extends Controller
             'message' => 'Logout successful.',
         ]);
     }
+
+    public function resendVerificationNotification(
+        Request $request
+    ): JsonResponse {
+        $user = $request->user();
+
+        if (! $user instanceof \App\Models\User) {
+            return response()->json([
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Email address is already verified.',
+            ]);
+        }
+
+        $user->sendEmailVerificationNotification();
+
+        return response()->json([
+            'message' => 'Verification link sent.',
+        ]);
+    }
 }

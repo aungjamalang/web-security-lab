@@ -7,6 +7,7 @@ export interface AuthUser {
     id: number
     name: string
     email: string
+    email_verified_at: string | null
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -78,6 +79,14 @@ export const useAuthStore = defineStore('auth', () => {
         initialized.value = true
     }
 
+    async function resendVerificationEmail(): Promise<string> {
+        const response = await api.post<{ message: string }>(
+            '/api/v1/auth/email/verification-notification',
+        )
+
+        return response.data.message
+    }
+
     return {
         user,
         initialized,
@@ -86,5 +95,6 @@ export const useAuthStore = defineStore('auth', () => {
         register,
         login,
         logout,
+        resendVerificationEmail,
     }
 })

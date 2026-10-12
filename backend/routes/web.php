@@ -23,11 +23,16 @@ Route::get('/email/verify/{id}/{hash}', function (
         'Invalid verification link.'
     );
 
-    if (! $user->hasVerifiedEmail()) {
-        $user->markEmailAsVerified();
-
-        event(new Verified($user));
+    if ($user->hasVerifiedEmail()) {
+        return redirect()->away(
+            rtrim(config('app.frontend_url'), '/')
+            . '/email/verification-result?status=error'
+        );
     }
+
+    $user->markEmailAsVerified();
+
+    event(new Verified($user));
 
     return redirect()->away(
         rtrim(config('app.frontend_url'), '/')

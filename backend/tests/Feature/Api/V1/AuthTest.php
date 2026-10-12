@@ -296,7 +296,10 @@ class AuthTest extends TestCase
 
         $response = $this->get($tamperedUrl);
 
-        $response->assertForbidden();
+        $response->assertRedirect(
+            rtrim(config('app.frontend_url'), '/')
+            . '/email/verification-result?status=error'
+        );
 
         $this->assertNull(
             $user->fresh()->email_verified_at,
@@ -320,10 +323,96 @@ class AuthTest extends TestCase
 
         $response = $this->get($verificationUrl);
 
-        $response->assertForbidden();
+        $response->assertRedirect(
+            rtrim(config('app.frontend_url'), '/')
+            . '/email/verification-result?status=error'
+        );
 
         $this->assertNull(
             $user->fresh()->email_verified_at,
         );
+    }
+
+    public function test_unverified_user_can_resend_verification_email(): void
+    {
+        Notification::fake();
+
+        $user = User::factory()->create([
+            'email_verified_at' => null,
+        ]);
+
+        $response = $this
+            ->actingAs($user, 'web')
+            ->postJson('/api/v1/auth/email/verification-notification');
+
+        $response
+            ->assertOk()
+            ->assertExactJson([
+                'message' => 'Verification link sent.',
+            ]);
+
+        Notification::assertSentTo(
+            $user,
+            VerifyEmail::class,
+        );
+    }
+
+    public function test_verified_user_cannot_resend_verification_email(): void
+    {
+        Notification::fake();
+
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+        ]);
+
+        $response = $this
+            ->actingAs($user, 'web')
+            ->postJson('/api/v1/auth/email/verification-notification');
+
+        $response
+            ->assertOk()
+            ->assertExactJson([
+                'message' => 'Email address is already verified.',
+            ]);
+
+        Notification::assertNothingSent();
+    }
+
+    public function test_guest_cannot_resend_verification_email(): void
+    {
+        Notification::fake();
+
+        $response = $this->postJson(
+            '/api/v1/auth/email/verification-notification'
+        );
+
+        $response->assertUnauthorized();
+
+        Notification::assertNothingSent();
+    }
+
+    public function test_already_verified_user_cannot_reuse_verification_link(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+        ]);
+
+        $verificationUrl = URL::temporarySignedRoute(
+            'verification.verify',
+            now()->addMinutes(60),
+            [
+                'id' => $user->id,
+                'hash' => sha1($user->getEmailForVerification()),
+            ],
+        );
+
+        $response = $this->get($verificationUrl);
+
+        $response->assertRedirect(
+            rtrim(config('app.frontend_url'), '/')
+            . '/email/verification-result?status=error'
+        );
+
+        $this->assertNotNull($user->fresh()->email_verified_at);
     }
 }

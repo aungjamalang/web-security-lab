@@ -26,7 +26,8 @@ async function register() {
         password_confirmation: passwordConfirmation.value,
     })
 
-    successMessage.value = message + ' You can now sign in.'
+    successMessage.value =
+      message + ' Please check your email for a verification link.'
 
     name.value = ''
     email.value = ''
