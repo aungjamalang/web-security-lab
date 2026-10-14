@@ -112,7 +112,7 @@ describe('DashboardView email verification', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain(
-      'Unable to send the verification email. Please try again.',
+      'An unexpected error occurred. Please try again.',
     )
   })
 })

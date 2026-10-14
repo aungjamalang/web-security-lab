@@ -87,6 +87,19 @@ export const useAuthStore = defineStore('auth', () => {
         return response.data.message
     }
 
+    async function changePassword(data: {
+        current_password: string
+        password: string
+        password_confirmation: string
+    }): Promise<string> {
+        const response = await api.put<{ message: string }>(
+            '/api/v1/auth/password',
+            data,
+        )
+
+        return response.data.message
+    }
+
     return {
         user,
         initialized,
@@ -96,5 +109,6 @@ export const useAuthStore = defineStore('auth', () => {
         login,
         logout,
         resendVerificationEmail,
+        changePassword,
     }
 })

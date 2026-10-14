@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import axios from 'axios'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -12,6 +13,13 @@ const isLoggingOut = ref(false)
 const verificationMessage = ref('')
 const verificationError = ref('')
 const isResendingVerification = ref(false)
+
+const currentPassword = ref('')
+const newPassword = ref('')
+const passwordConfirmation = ref('')
+const passwordChangeMessage = ref('')
+const passwordChangeError = ref('')
+const isChangingPassword = ref(false)
 
 async function logout() {
   errorMessage.value = ''
@@ -50,11 +58,53 @@ async function resendVerificationEmail() {
   try {
     verificationMessage.value =
       await authStore.resendVerificationEmail()
-  } catch {
-    verificationError.value =
-      'Unable to send the verification email. Please try again.'
+  } catch (error: unknown) {
+    if (axios.isAxiosError(error)) {
+      const data = error.response?.data as
+        | { message?: string }
+        | undefined
+
+      verificationError.value =
+        data?.message ??
+        'Unable to send the verification email. Please try again.'
+    } else {
+      verificationError.value =
+        'An unexpected error occurred. Please try again.'
+    }
   } finally {
     isResendingVerification.value = false
+  }
+}
+
+async function changePassword() {
+  passwordChangeMessage.value = ''
+  passwordChangeError.value = ''
+  isChangingPassword.value = true
+
+  try {
+    passwordChangeMessage.value = await authStore.changePassword({
+      current_password: currentPassword.value,
+      password: newPassword.value,
+      password_confirmation: passwordConfirmation.value,
+    })
+
+    currentPassword.value = ''
+    newPassword.value = ''
+    passwordConfirmation.value = ''
+  } catch (error: unknown) {
+    if (axios.isAxiosError(error)) {
+      const data = error.response?.data as
+        | { message?: string; errors?: Record<string, string[]> }
+        | undefined
+
+      passwordChangeError.value = data?.errors
+        ? Object.values(data.errors).flat().join(' ')
+        : data?.message ?? 'Unable to change password. Please try again.'
+    } else {
+      passwordChangeError.value = 'An unexpected error occurred.'
+    }
+  } finally {
+    isChangingPassword.value = false
   }
 }
 </script>
@@ -111,6 +161,70 @@ async function resendVerificationEmail() {
               {{ verificationError }}
             </p>
           </template>
+        </section>
+
+        <section
+          v-if="authStore.user.email_verified_at"
+          class="password-section"
+        >
+          <h3>Change password</h3>
+
+          <form class="password-form" @submit.prevent="changePassword">
+            <label for="current-password">Current password</label>
+            <input
+              id="current-password"
+              v-model="currentPassword"
+              type="password"
+              autocomplete="current-password"
+              required
+            />
+
+            <label for="new-password">New password</label>
+            <input
+              id="new-password"
+              v-model="newPassword"
+              type="password"
+              autocomplete="new-password"
+              minlength="8"
+              required
+            />
+
+            <label for="password-confirmation">
+              Confirm new password
+            </label>
+            <input
+              id="password-confirmation"
+              v-model="passwordConfirmation"
+              type="password"
+              autocomplete="new-password"
+              minlength="8"
+              required
+            />
+
+            <p
+              v-if="passwordChangeMessage"
+              class="verified-status"
+              role="status"
+            >
+              {{ passwordChangeMessage }}
+            </p>
+
+            <p
+              v-if="passwordChangeError"
+              class="error"
+              role="alert"
+            >
+              {{ passwordChangeError }}
+            </p>
+
+            <button type="submit" :disabled="isChangingPassword">
+              {{
+                isChangingPassword
+                  ? 'Changing password…'
+                  : 'Change password'
+              }}
+            </button>
+          </form>
         </section>
 
         <button
@@ -178,10 +292,15 @@ h1 {
   margin-top: 8px;
 }
 
-.verification-section {
+.verification-section,
+.password-section {
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid #e5e7eb;
+}
+
+.password-section h3 {
+  margin-top: 0;
 }
 
 .verification-notice {
@@ -192,6 +311,23 @@ h1 {
 .verified-status {
   color: #047857;
   line-height: 1.5;
+}
+
+.password-form {
+  display: grid;
+  gap: 10px;
+}
+
+.password-form label {
+  font-weight: 600;
+}
+
+.password-form input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
 }
 
 button {

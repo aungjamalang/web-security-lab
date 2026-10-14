@@ -415,4 +415,167 @@ class AuthTest extends TestCase
 
         $this->assertNotNull($user->fresh()->email_verified_at);
     }
+
+    public function test_unverified_user_cannot_change_password(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => null,
+            'password' => 'CurrentPass123!',
+        ]);
+
+        $response = $this
+            ->actingAs($user, 'web')
+            ->putJson('/api/v1/auth/password', [
+                'current_password' => 'CurrentPass123!',
+                'password' => 'NewSecurePass456!',
+                'password_confirmation' => 'NewSecurePass456!',
+            ]);
+
+        $response
+            ->assertForbidden()
+            ->assertJson([
+                'message' => 'Your email address is not verified.',
+            ]);
+    }
+
+    public function test_verified_user_can_change_password(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => 'CurrentPass123!',
+        ]);
+
+        $response = $this
+            ->withHeaders([
+                'Origin' => 'http://localhost:5173',
+                'Referer' => 'http://localhost:5173/',
+            ])
+            ->actingAs($user, 'web')
+            ->putJson('/api/v1/auth/password', [
+                'current_password' => 'CurrentPass123!',
+                'password' => 'NewSecurePass456!',
+                'password_confirmation' => 'NewSecurePass456!',
+            ]);
+
+        $response
+            ->assertOk()
+            ->assertExactJson([
+                'message' => 'Password changed successfully.',
+            ]);
+
+        $this->assertTrue(
+            \Illuminate\Support\Facades\Hash::check(
+                'NewSecurePass456!',
+                $user->fresh()->password,
+            ),
+        );
+    }
+
+    public function test_password_change_rejects_incorrect_current_password(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => 'CurrentPass123!',
+        ]);
+
+        $response = $this
+            ->withHeaders([
+                'Origin' => 'http://localhost:5173',
+                'Referer' => 'http://localhost:5173/',
+            ])
+            ->actingAs($user, 'web')
+            ->putJson('/api/v1/auth/password', [
+                'current_password' => 'WrongPassword123!',
+                'password' => 'NewSecurePass456!',
+                'password_confirmation' => 'NewSecurePass456!',
+            ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors('current_password');
+
+        $this->assertTrue(
+            \Illuminate\Support\Facades\Hash::check(
+                'CurrentPass123!',
+                $user->fresh()->password,
+            ),
+        );
+    }
+
+    public function test_password_change_rejects_mismatched_confirmation(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => 'CurrentPass123!',
+        ]);
+
+        $response = $this
+            ->withHeaders([
+                'Origin' => 'http://localhost:5173',
+                'Referer' => 'http://localhost:5173/',
+            ])
+            ->actingAs($user, 'web')
+            ->putJson('/api/v1/auth/password', [
+                'current_password' => 'CurrentPass123!',
+                'password' => 'NewSecurePass456!',
+                'password_confirmation' => 'DifferentPass789!',
+            ]);
+
+        $response
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('password');
+
+        $this->assertTrue(
+            \Illuminate\Support\Facades\Hash::check(
+                'CurrentPass123!',
+                $user->fresh()->password,
+            ),
+        );
+    }
+
+    public function test_password_change_rejects_reusing_current_password(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => 'CurrentPass123!',
+        ]);
+
+        $response = $this
+            ->withHeaders([
+                'Origin' => 'http://localhost:5173',
+                'Referer' => 'http://localhost:5173/',
+            ])
+            ->actingAs($user, 'web')
+            ->putJson('/api/v1/auth/password', [
+                'current_password' => 'CurrentPass123!',
+                'password' => 'CurrentPass123!',
+                'password_confirmation' => 'CurrentPass123!',
+            ]);
+
+        $response
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('password');
+
+        $this->assertTrue(
+            \Illuminate\Support\Facades\Hash::check(
+                'CurrentPass123!',
+                $user->fresh()->password,
+            ),
+        );
+    }
+
+    public function test_guest_cannot_change_password(): void
+    {
+        $response = $this
+            ->withHeaders([
+                'Origin' => 'http://localhost:5173',
+                'Referer' => 'http://localhost:5173/',
+            ])
+            ->putJson('/api/v1/auth/password', [
+                'current_password' => 'CurrentPass123!',
+                'password' => 'NewSecurePass456!',
+                'password_confirmation' => 'NewSecurePass456!',
+            ]);
+
+        $response->assertUnauthorized();
+    }
 }

@@ -80,4 +80,34 @@ class AuthController extends Controller
             'message' => 'Verification link sent.',
         ]);
     }
+
+    public function changePassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'current_password' => [
+                'required',
+                'string',
+                'current_password',
+            ],
+            'password' => [
+                'required',
+                'string',
+                'min:8',
+                'confirmed',
+                'different:current_password',
+            ],
+        ]);
+
+        $user = $request->user();
+
+        $user->password = $validated['password'];
+        $user->save();
+
+        // Regenerate the current session after changing credentials.
+        $request->session()->regenerate();
+
+        return response()->json([
+            'message' => 'Password changed successfully.',
+        ]);
+    }
 }

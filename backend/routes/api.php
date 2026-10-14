@@ -18,6 +18,8 @@ Route::prefix('v1')->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
     Route::post('/auth/email/verification-notification', [AuthController::class, 'resendVerificationNotification'])
     ->middleware(['auth:sanctum', 'throttle:6,1']);
+    Route::put('/auth/password', [AuthController::class, 'changePassword'])
+    ->middleware(['auth:sanctum', 'verified', 'throttle:5,1']);
 });
 
 Route::get('/user', function (Request $request) {
