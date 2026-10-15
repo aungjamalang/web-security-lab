@@ -20,6 +20,9 @@ Route::prefix('v1')->group(function () {
     ->middleware(['auth:sanctum', 'throttle:6,1']);
     Route::put('/auth/password', [AuthController::class, 'changePassword'])
     ->middleware(['auth:sanctum', 'verified', 'throttle:5,1']);
+    Route::post('/auth/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:5,1');
+    Route::post('/auth/reset-password', [AuthController::class, 'resetPassword'])
+    ->middleware('throttle:5,1');
 });
 
 Route::get('/user', function (Request $request) {

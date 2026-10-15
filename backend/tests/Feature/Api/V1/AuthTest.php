@@ -578,4 +578,197 @@ class AuthTest extends TestCase
 
         $response->assertUnauthorized();
     }
+
+    public function test_registered_user_can_request_password_reset(): void
+    {
+        Notification::fake();
+
+        $user = User::factory()->create();
+
+        $response = $this->postJson('/api/v1/auth/forgot-password', [
+            'email' => $user->email,
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertExactJson([
+                'message' => 'If an account exists for that email, a password reset link will be sent.',
+            ]);
+
+        Notification::assertSentTo(
+            $user,
+            \Illuminate\Auth\Notifications\ResetPassword::class,
+        );
+    }
+
+    public function test_unknown_email_gets_generic_password_reset_response(): void
+    {
+        Notification::fake();
+
+        $response = $this->postJson('/api/v1/auth/forgot-password', [
+            'email' => 'unknown@example.test',
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertExactJson([
+                'message' => 'If an account exists for that email, a password reset link will be sent.',
+            ]);
+
+        Notification::assertNothingSent();
+    }
+
+    public function test_user_can_reset_password_with_valid_token(): void
+    {
+        $user = User::factory()->create([
+            'password' => 'OldPassword123!',
+        ]);
+
+        $token = \Illuminate\Support\Facades\Password::createToken($user);
+
+        $response = $this->postJson('/api/v1/auth/reset-password', [
+            'token' => $token,
+            'email' => $user->email,
+            'password' => 'NewSecurePass456!',
+            'password_confirmation' => 'NewSecurePass456!',
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertExactJson([
+                'message' => 'Your password has been reset successfully.',
+            ]);
+
+        $this->assertTrue(
+            \Illuminate\Support\Facades\Hash::check(
+                'NewSecurePass456!',
+                $user->fresh()->password,
+            ),
+        );
+    }
+
+    public function test_password_reset_rejects_invalid_token(): void
+    {
+        $user = User::factory()->create([
+            'password' => 'OldPassword123!',
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/reset-password', [
+            'token'                 => 'invalid-reset-token',
+            'email'                 => $user->email,
+            'password'              => 'NewSecurePass456!',
+            'password_confirmation' => 'NewSecurePass456!',
+        ]);
+
+        $response
+            ->assertUnprocessable()
+            ->assertExactJson([
+                'message' => 'This password reset link is invalid or has expired.',
+            ]);
+
+        $this->assertTrue(
+            \Illuminate\Support\Facades\Hash::check(
+                'OldPassword123!',
+                $user->fresh()->password,
+            ),
+        );
+    }
+
+    public function test_password_reset_token_cannot_be_reused(): void
+    {
+        $user = User::factory()->create([
+            'password' => 'OldPassword123!',
+        ]);
+
+        $token = \Illuminate\Support\Facades\Password::createToken($user);
+
+        $firstResponse = $this->postJson('/api/v1/auth/reset-password', [
+            'token'                 => $token,
+            'email'                 => $user->email,
+            'password'              => 'FirstNewPass456!',
+            'password_confirmation' => 'FirstNewPass456!',
+        ]);
+
+        $firstResponse->assertOk();
+
+        $secondResponse = $this->postJson('/api/v1/auth/reset-password', [
+            'token'                 => $token,
+            'email'                 => $user->email,
+            'password'              => 'SecondNewPass789!',
+            'password_confirmation' => 'SecondNewPass789!',
+        ]);
+
+        $secondResponse
+            ->assertUnprocessable()
+            ->assertExactJson([
+                'message' => 'This password reset link is invalid or has expired.',
+            ]);
+
+        $this->assertTrue(
+            \Illuminate\Support\Facades\Hash::check(
+                'FirstNewPass456!',
+                $user->fresh()->password,
+            ),
+        );
+    }
+
+    public function test_password_reset_rejects_expired_token(): void
+    {
+        $user = User::factory()->create([
+            'password' => 'OldPassword123!',
+        ]);
+
+        $token = \Illuminate\Support\Facades\Password::createToken($user);
+
+        \Illuminate\Support\Facades\DB::table('password_reset_tokens')
+            ->where('email', $user->email)
+            ->update([
+                'created_at' => now()->subMinutes(
+                    config('auth.passwords.users.expire') + 1
+                ),
+            ]);
+
+        $response = $this->postJson('/api/v1/auth/reset-password', [
+            'token'                 => $token,
+            'email'                 => $user->email,
+            'password'              => 'NewSecurePass456!',
+            'password_confirmation' => 'NewSecurePass456!',
+        ]);
+
+        $response
+            ->assertUnprocessable()
+            ->assertExactJson([
+                'message' => 'This password reset link is invalid or has expired.',
+            ]);
+
+        $this->assertTrue(
+            \Illuminate\Support\Facades\Hash::check(
+                'OldPassword123!',
+                $user->fresh()->password,
+            ),
+        );
+    }
+
+    public function test_password_reset_rejects_mismatched_confirmation(): void
+    {
+        $user = User::factory()->create();
+
+        $token = \Illuminate\Support\Facades\Password::createToken($user);
+
+        $response = $this->postJson('/api/v1/auth/reset-password', [
+            'token'                 => $token,
+            'email'                 => $user->email,
+            'password'              => 'NewSecurePass456!',
+            'password_confirmation' => 'DifferentPass789!',
+        ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors('password');
+
+        $this->assertNotNull(
+            \Illuminate\Support\Facades\DB::table('password_reset_tokens')
+                ->where('email', $user->email)
+                ->first(),
+        );
+    }
 }

@@ -9,6 +9,7 @@ use App\Services\AuthService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Password;
 
 class AuthController extends Controller
 {
@@ -109,5 +110,51 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Password changed successfully.',
         ]);
+    }
+
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $request->validate([
+            'email' => ['required', 'email'],
+        ]);
+
+        Password::sendResetLink(
+            $request->only('email')
+        );
+
+        return response()->json([
+            'message' => 'If an account exists for that email, a password reset link will be sent.',
+        ]);
+    }
+
+    public function resetPassword(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'token'     => ['required', 'string'],
+            'email'     => ['required', 'email'],
+            'password'  => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $status = Password::reset(
+            $validated,
+            function (\App\Models\User $user, string $password): void {
+                $user->forceFill([
+                    'password'          => $password,
+                    'remember_token'    => \Illuminate\Support\Str::random(60),
+                ])->save();
+
+                event(new \Illuminate\Auth\Events\PasswordReset($user));
+            }
+        );
+
+        if ($status === Password::PASSWORD_RESET) {
+            return response()->json([
+                'message' => 'Your password has been reset successfully.',
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'This password reset link is invalid or has expired.',
+        ], 422);
     }
 }

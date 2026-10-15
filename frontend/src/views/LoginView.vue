@@ -1,4 +1,3 @@
-
 <script setup lang="ts">
 import { ref } from 'vue'
 import axios from 'axios'
@@ -56,22 +55,14 @@ async function login() {
 
       <form @submit.prevent="login">
         <label for="email">Email address</label>
-        <input
-          id="email"
-          v-model.trim="email"
-          type="email"
-          autocomplete="username"
-          required
-        />
+        <input id="email" v-model.trim="email" type="email" autocomplete="username" required />
 
         <label for="password">Password</label>
-        <input
-          id="password"
-          v-model="password"
-          type="password"
-          autocomplete="current-password"
-          required
-        />
+        <input id="password" v-model="password" type="password" autocomplete="current-password" required />
+
+        <p class="forgot-password-link">
+          <RouterLink to="/forgot-password">Forgot password?</RouterLink>
+        </p>
 
         <p v-if="errorMessage" class="error" role="alert">
           {{ errorMessage }}
@@ -163,5 +154,21 @@ button:disabled {
 .register-link a {
   color: #6c63ff;
   font-weight: 600;
+}
+
+.forgot-password-link {
+  margin: 0;
+  text-align: right;
+}
+
+.forgot-password-link a {
+  color: #6c63ff;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.forgot-password-link a:hover {
+  text-decoration: underline;
 }
 </style>
