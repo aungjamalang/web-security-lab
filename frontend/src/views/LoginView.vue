@@ -6,6 +6,9 @@ import { useAuthStore } from '@/stores/auth'
 
 const email = ref('')
 const password = ref('')
+const twoFactorCode = ref('')
+const challengeToken = ref('')
+const twoFactorRequired = ref(false)
 const errorMessage = ref('')
 const isLoading = ref(false)
 
@@ -17,12 +20,35 @@ async function login() {
   isLoading.value = true
 
   try {
-    const user = await authStore.login({
+    if (twoFactorRequired.value) {
+      const user = await authStore.verifyTwoFactorLogin(
+        challengeToken.value,
+        twoFactorCode.value.trim(),
+      )
+
+      if (!user) {
+        errorMessage.value =
+          'Your session could not be verified. Please try again.'
+        return
+      }
+
+      await router.replace('/dashboard')
+      return
+    }
+
+    const result = await authStore.login({
       email: email.value,
       password: password.value,
     })
 
-    if (!user) {
+    if (result.twoFactorRequired) {
+      challengeToken.value = result.challengeToken ?? ''
+      twoFactorRequired.value = true
+      password.value = ''
+      return
+    }
+
+    if (!result.user) {
       errorMessage.value =
         'Your session could not be verified. Please try again.'
       return
@@ -54,26 +80,38 @@ async function login() {
       <p class="subtitle">Sign in to Web Security Lab</p>
 
       <form @submit.prevent="login">
-        <label for="email">Email address</label>
-        <input id="email" v-model.trim="email" type="email" autocomplete="username" required />
+        <template v-if="!twoFactorRequired">
+          <label for="email">Email address</label>
+          <input id="email" v-model.trim="email" type="email" autocomplete="username" required />
 
-        <label for="password">Password</label>
-        <input id="password" v-model="password" type="password" autocomplete="current-password" required />
+          <label for="password">Password</label>
+          <input id="password" v-model="password" type="password" autocomplete="current-password" required />
 
-        <p class="forgot-password-link">
-          <RouterLink to="/forgot-password">Forgot password?</RouterLink>
-        </p>
+          <p class="forgot-password-link">
+            <RouterLink to="/forgot-password">Forgot password?</RouterLink>
+          </p>
+        </template>
+
+        <template v-else>
+          <p>Enter the 6-digit code from your authenticator app or one of your recovery codes.</p>
+          <label for="two-factor-code">Authentication or recovery code</label>
+          <input id="two-factor-code" v-model.trim="twoFactorCode" type="text" autocomplete="one-time-code" required />
+        </template>
 
         <p v-if="errorMessage" class="error" role="alert">
           {{ errorMessage }}
         </p>
 
         <button type="submit" :disabled="isLoading">
-          {{ isLoading ? 'Signing in…' : 'Sign in' }}
+          {{ isLoading ? 'Verifying…' : twoFactorRequired ? 'Verify and sign in' : 'Sign in' }}
         </button>
       </form>
 
-      <p class="register-link">
+      <p v-if="twoFactorRequired" class="register-link">
+        <button type="button" :disabled="isLoading" @click="twoFactorRequired = false; challengeToken = ''; twoFactorCode = ''">Back to sign in</button>
+      </p>
+
+      <p v-else class="register-link">
         Don't have an account?
         <RouterLink to="/register">Create an account</RouterLink>
       </p>

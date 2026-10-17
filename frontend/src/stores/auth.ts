@@ -46,13 +46,36 @@ export const useAuthStore = defineStore('auth', () => {
     async function login(credentials: {
         email: string
         password: string
-    }): Promise<AuthUser | null> {
+    }): Promise<{ user: AuthUser | null; twoFactorRequired: boolean; challengeToken?: string }> {
         await api.get('/sanctum/csrf-cookie')
 
-        await api.post('/api/v1/auth/login', credentials)
+        const response = await api.post<{
+            two_factor_required?: boolean
+            challenge_token?: string
+        }>('/api/v1/auth/login', credentials)
+
+        if (response.data.two_factor_required) {
+            return {
+                user: null,
+                twoFactorRequired: true,
+                challengeToken: response.data.challenge_token,
+            }
+        }
 
         initialized.value = false
+        return {
+            user: await fetchUser(true),
+            twoFactorRequired: false,
+        }
+    }
 
+    async function verifyTwoFactorLogin(challengeToken: string, code: string): Promise<AuthUser | null> {
+        await api.post('/api/v1/auth/two-factor/login', {
+            challenge_token: challengeToken,
+            code,
+        })
+
+        initialized.value = false
         return await fetchUser(true)
     }
 
@@ -134,6 +157,7 @@ export const useAuthStore = defineStore('auth', () => {
         fetchUser,
         register,
         login,
+        verifyTwoFactorLogin,
         logout,
         resendVerificationEmail,
         changePassword,
