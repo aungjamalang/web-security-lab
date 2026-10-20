@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use App\Models\User;
@@ -92,68 +93,130 @@ class AuthController extends Controller
             $validated['challenge_token']
         );
 
-        $userId = Cache::get($cacheKey);
+        $lock = Cache::store()->getStore()->lock($cacheKey . ':lock', 10);
 
-        if (! $userId) {
-            return response()->json([
-                'message' => 'The login challenge is invalid or expired.',
-            ], 401);
-        }
+        try {
+            $response = $lock->block(3, function () use (
+                $cacheKey,
+                $validated,
+                $request
+            ): JsonResponse {
+                $userId = Cache::get($cacheKey);
 
-        $user = User::find($userId);
-
-        if (
-            ! $user
-            || ! $user->two_factor_confirmed_at
-            || ! $user->two_factor_secret
-        ) {
-            Cache::forget($cacheKey);
-
-            return response()->json([
-                'message' => 'The login challenge is invalid or expired.',
-            ], 401);
-        }
-
-        $code = $validated['code'];
-        $google2fa = app('pragmarx.google2fa');
-
-        $validTotp = preg_match('/^\d{6}$/', $code)
-            && $google2fa->verifyKey($user->two_factor_secret, $code);
-
-        $recoveryCodes = $user->two_factor_recovery_codes ?? [];
-        $matchedRecoveryIndex = null;
-
-        if (! $validTotp) {
-            foreach ($recoveryCodes as $index => $recoveryCode) {
-                if (hash_equals($recoveryCode, $code)) {
-                    $matchedRecoveryIndex = $index;
-                    break;
+                if (! $userId) {
+                    return response()->json([
+                        'message' => 'The login challenge is invalid or expired.',
+                    ], 401);
                 }
+
+                $user = User::find($userId);
+
+                if (
+                    ! $user
+                    || ! $user->two_factor_confirmed_at
+                    || ! $user->two_factor_secret
+                ) {
+                    Cache::forget($cacheKey);
+
+                    return response()->json([
+                        'message' => 'The login challenge is invalid or expired.',
+                    ], 401);
+                }
+
+                $code = $validated['code'];
+                $google2fa = app('pragmarx.google2fa');
+
+                $validTotp = preg_match('/^\d{6}$/', $code)
+                    && $google2fa->verifyKey($user->two_factor_secret, $code);
+
+                $recoveryCodes = $user->two_factor_recovery_codes ?? [];
+                $matchedRecoveryIndex = null;
+
+                if (! $validTotp) {
+                    foreach ($recoveryCodes as $index => $recoveryCode) {
+                        if (
+                            is_string($recoveryCode)
+                            && hash_equals($recoveryCode, $code)
+                        ) {
+                            $matchedRecoveryIndex = $index;
+                            break;
+                        }
+                    }
+                }
+
+                if (! $validTotp && $matchedRecoveryIndex === null) {
+                    return response()->json([
+                        'message' => 'Invalid authentication code.',
+                    ], 422);
+                }
+
+                if ($matchedRecoveryIndex !== null) {
+                    $consumed = DB::transaction(function () use (
+                        $user,
+                        $code
+                    ): bool {
+                        $lockedUser = User::whereKey($user->getKey())
+                            ->lockForUpdate()
+                            ->first();
+
+                        if (
+                            ! $lockedUser
+                            || ! is_array($lockedUser->two_factor_recovery_codes)
+                        ) {
+                            return false;
+                        }
+
+                        $codes = $lockedUser->two_factor_recovery_codes;
+
+                        foreach ($codes as $index => $storedCode) {
+                            if (
+                                is_string($storedCode)
+                                && hash_equals($storedCode, $code)
+                            ) {
+                                unset($codes[$index]);
+
+                                $lockedUser->forceFill([
+                                    'two_factor_recovery_codes' => array_values($codes),
+                                ])->save();
+
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    });
+
+                    if (! $consumed) {
+                        return response()->json([
+                            'message' => 'The recovery code is invalid or has already been used.',
+                        ], 422);
+                    }
+                }
+
+                // Consume the challenge before establishing the authenticated session.
+                Cache::forget($cacheKey);
+
+                Auth::guard('web')->login($user);
+                $request->session()->regenerate();
+
+                return response()->json([
+                    'message' => 'Login successful.',
+                    'user' => $user,
+                ]);
+            });
+
+            if ($response instanceof JsonResponse) {
+                return $response;
             }
-        }
 
-        if (! $validTotp && $matchedRecoveryIndex === null) {
             return response()->json([
-                'message' => 'Invalid authentication code.',
-            ], 422);
+                'message' => 'The login challenge is invalid or expired.',
+            ], 401);
+        } catch (\Illuminate\Contracts\Cache\LockTimeoutException $exception) {
+            return response()->json([
+                'message' => 'Login verification is already in progress. Please try again.',
+            ], 429);
         }
-
-        if ($matchedRecoveryIndex !== null) {
-            array_splice($recoveryCodes, $matchedRecoveryIndex, 1);
-            $user->two_factor_recovery_codes = $recoveryCodes;
-            $user->save();
-        }
-
-        // Consume the challenge before establishing the authenticated session.
-        Cache::forget($cacheKey);
-
-        Auth::guard('web')->login($user);
-        $request->session()->regenerate();
-
-        return response()->json([
-            'message' => 'Login successful.',
-            'user' => $user,
-        ]);
     }
 
     public function logout(Request $request): JsonResponse
@@ -387,41 +450,65 @@ class AuthController extends Controller
             ], 401);
         }
 
-        if (
-            $user->two_factor_confirmed_at === null
-            || ! is_array($user->two_factor_recovery_codes)
-        ) {
+        $result = DB::transaction(function () use ($user, $validated) {
+            $lockedUser = User::whereKey($user->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if (
+                ! $lockedUser
+                || $lockedUser->two_factor_confirmed_at === null
+                || ! is_array($lockedUser->two_factor_recovery_codes)
+            ) {
+                return ['status' => 'disabled'];
+            }
+
+            $codes = $lockedUser->two_factor_recovery_codes;
+            $providedCode = $validated['recovery_code'];
+            $matchedIndex = null;
+
+            foreach ($codes as $index => $storedCode) {
+                if (
+                    is_string($storedCode)
+                    && hash_equals($storedCode, $providedCode)
+                ) {
+                    $matchedIndex = $index;
+                    break;
+                }
+            }
+
+            if ($matchedIndex === null) {
+                return ['status' => 'invalid'];
+            }
+
+            unset($codes[$matchedIndex]);
+            $codes = array_values($codes);
+
+            $lockedUser->forceFill([
+                'two_factor_recovery_codes' => $codes,
+            ])->save();
+
+            return [
+                'status' => 'accepted',
+                'remaining' => count($codes),
+            ];
+        });
+
+        if ($result['status'] === 'disabled') {
             return response()->json([
                 'message' => 'Two-factor authentication is not enabled.',
             ], 409);
         }
 
-        $codes = $user->two_factor_recovery_codes;
-        $providedCode = $validated['recovery_code'];
-        $matchedIndex = null;
-
-        foreach ($codes as $index => $storedCode) {
-            if (is_string($storedCode) && hash_equals($storedCode, $providedCode)) {
-                $matchedIndex = $index;
-                break;
-            }
-        }
-
-        if ($matchedIndex === null) {
+        if ($result['status'] === 'invalid') {
             return response()->json([
                 'message' => 'The recovery code is invalid or has already been used.',
             ], 422);
         }
 
-        unset($codes[$matchedIndex]);
-
-        $user->forceFill([
-            'two_factor_recovery_codes' => array_values($codes),
-        ])->save();
-
         return response()->json([
             'message' => 'Recovery code accepted.',
-            'remaining_recovery_codes' => count($codes),
+            'remaining_recovery_codes' => $result['remaining'],
         ]);
     }
 }
